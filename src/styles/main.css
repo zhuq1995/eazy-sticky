@@ -1,0 +1,265 @@
+/* 全局样式文件 */
+
+/* 引入 CSS 变量 */
+@import './variables.css';
+
+/* 样式重置 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* 基础布局 */
+body {
+    font-family: var(--note-font-family);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+    width: 100vw;
+    height: 100vh;
+}
+
+/* ========================================
+   拖拽相关样式
+   ======================================== */
+
+/* 拖拽状态样式 - 需求 1.4, 12.1, 12.2 */
+.dragging {
+    cursor: move !important;
+    user-select: none;
+    opacity: 0.95;
+    /* 拖拽时禁用过渡动画以提高性能 - 需求 12.4 */
+    transition: none !important;
+    /* 使用 transform 提供视觉反馈 */
+    transform-origin: center center;
+}
+
+/* 拖拽时的阴影效果增强 */
+.dragging {
+    box-shadow: 4px 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+/* 可拖拽元素的默认样式 */
+.draggable {
+    /* 使用 transform 而非 top/left - 需求 12.3 */
+    will-change: transform;
+    /* 默认启用过渡动画 - 需求 12.5 */
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* 拖拽句柄样式 */
+.drag-handle {
+    cursor: move;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+/* ========================================
+   窗口置顶状态样式
+   ======================================== */
+
+/* 置顶状态的视觉指示 - 需求 3.4 */
+.always-on-top {
+    /* 添加特殊边框指示置顶状态 */
+    border: 2px solid rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2),
+        var(--note-shadow);
+}
+
+/* 置顶按钮样式 */
+.pin-button {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0.6;
+}
+
+.pin-button:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+/* 置顶按钮激活状态 */
+.pin-button.active {
+    opacity: 1;
+    color: #3b82f6;
+}
+
+/* ========================================
+   窗口尺寸调整样式
+   ======================================== */
+
+/* 尺寸调整光标样式 - 需求 8.1 */
+.resize-handle {
+    position: absolute;
+    z-index: 10;
+}
+
+/* 边缘调整句柄 */
+.resize-handle-top {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: ns-resize;
+}
+
+.resize-handle-right {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: ew-resize;
+}
+
+.resize-handle-bottom {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    cursor: ns-resize;
+}
+
+.resize-handle-left {
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: ew-resize;
+}
+
+/* 角落调整句柄 */
+.resize-handle-top-left {
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nwse-resize;
+}
+
+.resize-handle-top-right {
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nesw-resize;
+}
+
+.resize-handle-bottom-left {
+    bottom: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nesw-resize;
+}
+
+.resize-handle-bottom-right {
+    bottom: 0;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nwse-resize;
+}
+
+/* 调整尺寸时的样式 */
+.resizing {
+    user-select: none;
+    /* 调整尺寸时禁用过渡动画 */
+    transition: none !important;
+}
+
+/* ========================================
+   窗口动画和过渡效果
+   ======================================== */
+
+/* 窗口创建动画 */
+@keyframes window-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.window-appear {
+    animation: window-appear 0.2s ease-out;
+}
+
+/* 窗口关闭动画 */
+@keyframes window-disappear {
+    from {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    to {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+}
+
+.window-disappear {
+    animation: window-disappear 0.2s ease-in;
+}
+
+/* ========================================
+   性能优化
+   ======================================== */
+
+/* 使用 GPU 加速 - 需求 10.1, 10.2 */
+.draggable,
+.resizable {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+}
+
+/* 减少重绘区域 */
+.dragging *,
+.resizing * {
+    pointer-events: none;
+}
+
+/* ========================================
+   辅助样式
+   ======================================== */
+
+/* 禁用文本选择（拖拽时） */
+.no-select {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+/* 窗口聚焦状态 */
+.window-focused {
+    z-index: 1000;
+}
+
+.window-unfocused {
+    opacity: 0.9;
+    z-index: 999;
+}
+
+/* 窗口最小化动画 */
+@keyframes window-minimize {
+    to {
+        transform: scale(0.1);
+        opacity: 0;
+    }
+}
+
+.window-minimizing {
+    animation: window-minimize 0.3s ease-in forwards;
+}

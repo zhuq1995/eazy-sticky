@@ -1,0 +1,40 @@
+{
+    "name": "sticky-notes-vue",
+    "version": "0.1.0",
+    "description": "一个基于 Vue 3 和 Electron 的桌面便签应用",
+    "type": "module",
+    "main": "dist/main/main.js",
+    "author": "",
+    "license": "MIT",
+    "scripts": {
+        "dev": "electron-vite dev",
+        "build": "electron-vite build",
+        "preview": "electron-vite preview",
+        "test": "vitest",
+        "test:ui": "vitest --ui",
+        "test:run": "vitest --run"
+    },
+    "dependencies": {
+        "@vueuse/core": "^10.0.0",
+        "@vueuse/electron": "^10.0.0",
+        "pinia": "^2.1.0",
+        "vue": "^3.4.0"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-vue": "^5.1.0",
+        "@vitest/ui": "^4.0.10",
+        "@vue/test-utils": "^2.4.6",
+        "@vue/tsconfig": "^0.5.0",
+        "electron": "^32.2.0",
+        "electron-vite": "^2.3.0",
+        "fast-check": "^4.3.0",
+        "happy-dom": "^20.0.10",
+        "typescript": "^5.6.0",
+        "vite": "^5.4.0",
+        "vitest": "^4.0.10"
+    },
+    "engines": {
+        "node": ">=18.0.0",
+        "npm": ">=9.0.0"
+    }
+}

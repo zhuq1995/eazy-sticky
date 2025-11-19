@@ -1,0 +1,25 @@
+/* CSS 变量定义 - 便签应用样式系统 */
+
+:root {
+    /* 颜色系统 */
+    --note-bg-start: #fef9e7;
+    --note-bg-end: #fef5d4;
+    --note-text-color: #333;
+    --note-border-color: #e0e0e0;
+    --note-shadow: 2px 2px 8px rgba(0, 0, 0, 0.15);
+
+    /* 尺寸系统 */
+    --note-width: 300px;
+    --note-height: 300px;
+    --note-padding: 16px;
+    --note-border-radius: 4px;
+
+    /* 字体系统 */
+    --note-font-size: 14px;
+    --note-line-height: 1.6;
+    --note-font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+    /* 工具栏 */
+    --toolbar-height: 24px;
+    --toolbar-bg: transparent;
+}
