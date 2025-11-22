@@ -11,6 +11,12 @@ import { app, BrowserWindow, screen, ipcMain, globalShortcut } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
 import * as path from 'path'
+import { TrayManager } from './TrayManager'
+import { ShortcutManager } from './ShortcutManager'
+import { DisplayManager } from './DisplayManager'
+import { AutoLauncher } from './AutoLauncher'
+import { WindowStateManager } from './WindowStateManager'
+import { ThemeAdapter } from './ThemeAdapter'
 
 // ==================== 类型定义 ====================
 
@@ -63,19 +69,19 @@ interface StoredWindowState {
 
 // ==================== 配置常量 ====================
 
-// 默认窗口配置
-const DEFAULT_WINDOW_CONFIG: WindowConfig = {
-    width: 300,
-    height: 300,
-    minWidth: 200,
-    minHeight: 200,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
+// 主窗口配置（管理窗口）
+const MAIN_WINDOW_CONFIG: WindowConfig = {
+    width: 800,
+    height: 600,
+    minWidth: 600,
+    minHeight: 400,
+    frame: true,              // 有边框
+    transparent: false,       // 不透明
+    backgroundColor: '#ffffff',
     resizable: true,
     movable: true,
     minimizable: true,
-    maximizable: false,
+    maximizable: true,
     closable: true,
     alwaysOnTop: false,
     webPreferences: {
@@ -86,6 +92,33 @@ const DEFAULT_WINDOW_CONFIG: WindowConfig = {
         webSecurity: true
     }
 }
+
+// 便利贴窗口配置（子窗口）
+const NOTE_WINDOW_CONFIG: WindowConfig = {
+    width: 300,
+    height: 300,
+    minWidth: 200,
+    minHeight: 200,
+    frame: false,             // ✅ 无边框 - 使用自定义标题栏
+    transparent: false,       // 不透明
+    backgroundColor: '#fef9e7',
+    resizable: true,
+    movable: true,
+    minimizable: true,
+    maximizable: false,       // 便利贴不需要最大化
+    closable: true,
+    alwaysOnTop: false,
+    webPreferences: {
+        preload: join(__dirname, '../preload/preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true
+    }
+}
+
+// 默认窗口配置（向后兼容）
+const DEFAULT_WINDOW_CONFIG: WindowConfig = NOTE_WINDOW_CONFIG
 
 // ==================== 环境检测 ====================
 
@@ -149,7 +182,7 @@ function isLinux(): boolean {
 
 // 开发环境配置
 const DEV_CONFIG = {
-    devTools: true,
+    devTools: false,          // ✅ 关闭开发者工具
     devServerUrl: process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173',
     // 热重载支持
     hotReload: true,
@@ -261,16 +294,40 @@ class WindowManager {
     private windows: Map<number, BrowserWindow> = new Map()
     private windowsById: Map<string, BrowserWindow> = new Map() // 新增：通过自定义ID映射窗口
     private stateFilePath: string
+    private displayManager: DisplayManager | null = null
+    private windowStateManager: WindowStateManager | null = null
+    private readonly MAX_WINDOWS = 20 // 最大窗口数量限制（验证需求: 10.3）
 
     constructor(stateFilePath: string = WINDOW_STATE_FILE) {
         this.stateFilePath = stateFilePath
     }
 
     /**
+     * 设置显示器管理器
+     * @param displayManager 显示器管理器实例
+     * 验证需求: 5.1, 5.2, 5.3, 5.4
+     */
+    setDisplayManager(displayManager: DisplayManager): void {
+        this.displayManager = displayManager
+        logger.info('DisplayManager 已集成到 WindowManager')
+    }
+
+    /**
+     * 设置窗口状态管理器
+     * @param windowStateManager 窗口状态管理器实例
+     * 验证需求: 8.1, 8.2, 8.3, 8.4
+     */
+    setWindowStateManager(windowStateManager: WindowStateManager): void {
+        this.windowStateManager = windowStateManager
+        logger.info('WindowStateManager 已集成到 WindowManager')
+    }
+
+    /**
      * 创建新窗口（扩展版本，支持自定义位置和尺寸）
      * @param options 窗口配置选项
      * @returns 创建的窗口实例
-     * 验证需求: 4.1, 4.2, 4.3
+     * @throws Error 如果达到窗口数量上限
+     * 验证需求: 4.1, 4.2, 4.3, 6.1, 6.2, 10.3
      */
     createWindow(options?: Partial<WindowConfig> & {
         windowId?: string
@@ -281,8 +338,23 @@ class WindowManager {
     }): BrowserWindow {
         logger.info('创建新窗口', { options })
 
+        // 检查窗口数量限制（验证需求: 10.3）
+        if (this.windows.size >= this.MAX_WINDOWS) {
+            const error = new Error(`已达到窗口数量上限（${this.MAX_WINDOWS}个）`)
+            logger.error('创建窗口失败', error, {
+                currentCount: this.windows.size,
+                maxCount: this.MAX_WINDOWS
+            })
+            throw error
+        }
+
+        // 根据是否有 noteId 选择配置
+        // 有 noteId = 便利贴子窗口（无边框）
+        // 无 noteId = 主窗口（有边框）
+        const baseConfig = options?.noteId ? NOTE_WINDOW_CONFIG : MAIN_WINDOW_CONFIG
+
         // 合并配置
-        const config = { ...DEFAULT_WINDOW_CONFIG, ...options }
+        const config = { ...baseConfig, ...options }
 
         // 如果提供了自定义位置，使用它
         if (options?.position) {
@@ -301,6 +373,17 @@ class WindowManager {
             config.alwaysOnTop = options.alwaysOnTop
         }
 
+        // 验证和调整窗口位置（验证需求: 6.1, 6.2）
+        if (this.displayManager && config.x !== undefined && config.y !== undefined) {
+            const adjustedPosition = this.displayManager.adjustPositionToBounds(
+                { x: config.x, y: config.y },
+                { width: config.width, height: config.height }
+            )
+            config.x = adjustedPosition.x
+            config.y = adjustedPosition.y
+            logger.debug('窗口位置已调整', { original: options?.position, adjusted: adjustedPosition })
+        }
+
         // 创建窗口
         const window = new BrowserWindow(config)
 
@@ -311,6 +394,27 @@ class WindowManager {
         if (options?.windowId) {
             this.windowsById.set(options.windowId, window)
             logger.debug(`窗口已注册，ID: ${options.windowId}, Electron ID: ${window.id}`)
+        }
+
+        // 注册窗口到显示器管理器（验证需求: 6.4）
+        if (this.displayManager) {
+            this.displayManager.registerWindow(window)
+            logger.debug(`窗口已注册到 DisplayManager: ${window.id}`)
+        }
+
+        // 注册窗口到主题适配器（验证需求: 9.3）
+        if (themeAdapter) {
+            themeAdapter.registerWindow(window)
+            logger.debug(`窗口已注册到 ThemeAdapter: ${window.id}`)
+        }
+
+        // 如果是便签窗口，默认不设置置顶（桌面模式）
+        // 桌面模式：窗口保持在普通层级，会被其他窗口遮挡
+        // 用户可以通过📌按钮切换到置顶模式
+        if (options?.noteId) {
+            // 默认不置顶，让窗口保持在普通层级
+            window.setAlwaysOnTop(false)
+            logger.debug(`便签窗口已设置为桌面模式（普通层级）: ${window.id}`)
         }
 
         // 加载内容
@@ -557,12 +661,13 @@ class WindowManager {
     /**
      * 设置窗口事件监听
      * @param window 窗口实例
+     * 验证需求: 8.1
      */
     private setupWindowEvents(window: BrowserWindow): void {
         // 窗口关闭前事件 - 保存最终状态
         window.on('close', () => {
             logger.debug(`窗口 ${window.id} 即将关闭，保存状态`)
-            this.saveWindowState(window.id)
+            this.saveWindowStateToManager(window)
         })
 
         // 窗口关闭事件 - 清理资源
@@ -571,30 +676,35 @@ class WindowManager {
             this.cleanupWindow(window.id)
         })
 
-        // 窗口移动事件 - 保存状态
+        // 窗口移动事件 - 保存状态（验证需求: 8.1）
         window.on('moved', () => {
-            this.saveWindowState(window.id)
+            this.saveWindowStateToManager(window)
         })
 
-        // 窗口调整大小事件 - 保存状态
+        // 窗口调整大小事件 - 保存状态（验证需求: 8.1）
         window.on('resized', () => {
-            this.saveWindowState(window.id)
+            this.saveWindowStateToManager(window)
         })
 
-        // 窗口最大化/还原事件 - 保存状态
+        // 窗口最大化/还原事件 - 保存状态（验证需求: 8.1）
         window.on('maximize', () => {
-            this.saveWindowState(window.id)
+            this.saveWindowStateToManager(window)
         })
 
         window.on('unmaximize', () => {
-            this.saveWindowState(window.id)
+            this.saveWindowStateToManager(window)
+        })
+
+        // 窗口置顶状态变更事件 - 保存状态（验证需求: 8.1）
+        window.on('always-on-top-changed', () => {
+            this.saveWindowStateToManager(window)
         })
     }
 
     /**
      * 清理窗口资源
      * @param windowId Electron窗口ID
-     * 验证需求: 5.4
+     * 验证需求: 5.4, 6.4
      */
     private cleanupWindow(windowId: number): void {
         try {
@@ -603,6 +713,12 @@ class WindowManager {
             // 从窗口映射中移除
             const window = this.windows.get(windowId)
             if (window) {
+                // 从显示器管理器注销窗口（验证需求: 6.4）
+                if (this.displayManager) {
+                    this.displayManager.unregisterWindow(windowId)
+                    logger.debug(`窗口已从 DisplayManager 注销: ${windowId}`)
+                }
+
                 // 移除所有事件监听器
                 window.removeAllListeners()
                 logger.debug(`已移除窗口 ${windowId} 的所有事件监听器`)
@@ -629,84 +745,129 @@ class WindowManager {
     }
 
     /**
-     * 保存窗口状态到存储
+     * 保存窗口状态到 WindowStateManager
+     * @param window 窗口实例
+     * 验证需求: 8.1
+     */
+    private saveWindowStateToManager(window: BrowserWindow): void {
+        if (!this.windowStateManager || window.isDestroyed()) {
+            return
+        }
+
+        try {
+            const bounds = window.getBounds()
+
+            // 获取窗口所在的显示器ID
+            let displayId = 0
+            if (this.displayManager) {
+                const display = this.displayManager.getDisplayForWindow(window)
+                if (display) {
+                    displayId = display.id
+                }
+            }
+
+            // 查找窗口的自定义ID
+            let customWindowId = `window-${window.id}`
+            for (const [id, win] of this.windowsById.entries()) {
+                if (win === window) {
+                    customWindowId = id
+                    break
+                }
+            }
+
+            // 构建窗口状态
+            const state = {
+                id: customWindowId,
+                bounds: {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height
+                },
+                isMaximized: window.isMaximized(),
+                isAlwaysOnTop: window.isAlwaysOnTop(),
+                displayId,
+                lastUpdated: Date.now()
+            }
+
+            // 保存到 WindowStateManager
+            this.windowStateManager.saveWindowState(customWindowId, state)
+            logger.debug(`窗口状态已保存: ${customWindowId}`)
+        } catch (error) {
+            logger.error('保存窗口状态失败', error as Error, { windowId: window.id })
+        }
+    }
+
+    /**
+     * 保存窗口状态到存储（旧方法，保留用于兼容）
      * @param windowId 窗口ID
      */
     saveWindowState(windowId: number): void {
         const window = this.windows.get(windowId)
         if (!window) return
 
+        this.saveWindowStateToManager(window)
+    }
+
+    /**
+     * 从 WindowStateManager 恢复窗口状态
+     * @param windowId 窗口ID（可选）
+     * @returns 窗口状态或null
+     * 验证需求: 8.2, 8.3
+     */
+    restoreWindowStateFromManager(windowId?: string): WindowState | null {
+        if (!this.windowStateManager) {
+            logger.warn('WindowStateManager 未初始化，无法恢复窗口状态')
+            return null
+        }
+
         try {
-            const bounds = window.getBounds()
-            const state: WindowState = {
-                x: bounds.x,
-                y: bounds.y,
-                width: bounds.width,
-                height: bounds.height,
-                isMaximized: window.isMaximized()
+            // 如果没有指定窗口ID，尝试恢复所有窗口状态
+            if (!windowId) {
+                const allStates = this.windowStateManager.getAllWindowStates()
+                if (allStates.length > 0) {
+                    // 返回最近更新的窗口状态
+                    const latestState = allStates.sort((a, b) => b.lastUpdated - a.lastUpdated)[0]
+                    logger.info('恢复最近的窗口状态', { windowId: latestState.id })
+
+                    return {
+                        x: latestState.bounds.x,
+                        y: latestState.bounds.y,
+                        width: latestState.bounds.width,
+                        height: latestState.bounds.height,
+                        isMaximized: latestState.isMaximized
+                    }
+                }
+                return null
             }
 
-            // 读取现有状态
-            let storedState: StoredWindowState = {
-                version: 1,
-                windows: {}
+            // 恢复指定窗口的状态
+            const state = this.windowStateManager.restoreWindowState(windowId)
+            if (!state) {
+                logger.debug(`没有找到窗口状态: ${windowId}`)
+                return null
             }
 
-            if (fs.existsSync(this.stateFilePath)) {
-                const data = fs.readFileSync(this.stateFilePath, 'utf-8')
-                storedState = JSON.parse(data)
+            logger.info('恢复窗口状态', { windowId })
+            return {
+                x: state.bounds.x,
+                y: state.bounds.y,
+                width: state.bounds.width,
+                height: state.bounds.height,
+                isMaximized: state.isMaximized
             }
-
-            // 更新窗口状态
-            storedState.windows[`window-${windowId}`] = {
-                ...state,
-                lastUpdated: Date.now()
-            }
-
-            // 写入文件
-            fs.writeFileSync(this.stateFilePath, JSON.stringify(storedState, null, 2))
         } catch (error) {
-            console.error('保存窗口状态失败:', error)
+            logger.error('恢复窗口状态失败', error as Error, { windowId })
+            return null
         }
     }
 
     /**
-     * 从存储恢复窗口状态
+     * 从存储恢复窗口状态（旧方法，保留用于兼容）
      * @returns 窗口状态或null
      */
     restoreWindowState(): WindowState | null {
-        try {
-            if (!fs.existsSync(this.stateFilePath)) {
-                return null
-            }
-
-            const data = fs.readFileSync(this.stateFilePath, 'utf-8')
-            const storedState: StoredWindowState = JSON.parse(data)
-
-            // 获取主窗口状态
-            const mainWindowState = storedState.windows['window-main']
-            if (!mainWindowState) {
-                return null
-            }
-
-            // 验证窗口位置是否在屏幕范围内
-            const { x, y, width, height } = mainWindowState
-            if (!this.isPositionValid(x, y, width, height)) {
-                console.warn('保存的窗口位置超出屏幕范围，使用默认位置')
-                return null
-            }
-
-            return {
-                x: mainWindowState.x,
-                y: mainWindowState.y,
-                width: mainWindowState.width,
-                height: mainWindowState.height,
-                isMaximized: mainWindowState.isMaximized
-            }
-        } catch (error) {
-            console.error('恢复窗口状态失败:', error)
-            return null
-        }
+        return this.restoreWindowStateFromManager()
     }
 
     /**
@@ -746,6 +907,33 @@ class WindowManager {
     }
 
     /**
+     * 获取当前窗口数量
+     * @returns 窗口数量
+     * 验证需求: 10.3
+     */
+    getWindowCount(): number {
+        return this.windows.size
+    }
+
+    /**
+     * 获取最大窗口数量限制
+     * @returns 最大窗口数量
+     * 验证需求: 10.3
+     */
+    getMaxWindows(): number {
+        return this.MAX_WINDOWS
+    }
+
+    /**
+     * 检查是否可以创建新窗口
+     * @returns 是否可以创建
+     * 验证需求: 10.3
+     */
+    canCreateWindow(): boolean {
+        return this.windows.size < this.MAX_WINDOWS
+    }
+
+    /**
      * 获取焦点窗口
      * @returns 焦点窗口或null
      */
@@ -782,6 +970,7 @@ class WindowManager {
     /**
      * 聚焦窗口（支持自定义ID）
      * @param customWindowId 自定义窗口ID
+     * @throws Error 如果窗口不存在或已销毁
      * 验证需求: 4.4
      */
     focusWindowById(customWindowId: string): void {
@@ -792,8 +981,11 @@ class WindowManager {
                 window.restore()
             }
             window.focus()
+            logger.debug(`窗口已聚焦: ${customWindowId}`)
         } else {
-            logger.warn(`窗口不存在或已销毁: ${customWindowId}`)
+            const error = new Error(`窗口不存在或已销毁: ${customWindowId}`)
+            logger.warn(error.message)
+            throw error
         }
     }
 
@@ -1087,6 +1279,32 @@ class WindowManager {
     }
 
     /**
+     * 保存所有窗口的最终状态
+     * 用于应用退出前保存
+     * 验证需求: 8.1
+     */
+    saveAllWindowStates(): void {
+        if (!this.windowStateManager) {
+            logger.warn('WindowStateManager 未初始化，无法保存窗口状态')
+            return
+        }
+
+        logger.info('保存所有窗口的最终状态')
+        let savedCount = 0
+
+        this.windows.forEach((window) => {
+            if (!window.isDestroyed()) {
+                this.saveWindowStateToManager(window)
+                savedCount++
+            }
+        })
+
+        // 强制立即保存所有状态
+        this.windowStateManager.saveAllStatesImmediate()
+        logger.info(`已保存 ${savedCount} 个窗口的最终状态`)
+    }
+
+    /**
      * 通过快捷键创建新窗口
      * @returns 创建的窗口实例
      * 验证需求: 11.1, 11.2, 11.3, 11.4
@@ -1296,6 +1514,8 @@ const logger = new Logger()
 function registerIPCHandlers(windowManager: WindowManager): void {
     logger.info('注册 IPC 处理器')
 
+    // 注意：shortcutManager 在应用初始化后才可用，IPC 处理器中会检查其是否存在
+
     // ==================== 窗口操作处理器 ====================
 
     /**
@@ -1375,10 +1595,10 @@ function registerIPCHandlers(windowManager: WindowManager): void {
      */
     ipcMain.handle('window:setPosition', async (event, x: number, y: number) => {
         try {
-            logger.debug('IPC: window:setPosition', { x, y })
             const window = BrowserWindow.fromWebContents(event.sender)
             if (window && !window.isDestroyed()) {
-                window.setPosition(x, y)
+                // 使用 setPosition 并传入 animate: false 参数以避免动画闪烁
+                window.setPosition(Math.round(x), Math.round(y), false)
             }
         } catch (error) {
             logger.error('设置窗口位置失败', error as Error, {
@@ -1713,6 +1933,722 @@ function registerIPCHandlers(windowManager: WindowManager): void {
         }
     })
 
+    // ==================== 托盘管理处理器 ====================
+
+    /**
+     * 显示托盘通知
+     * 验证需求: 2.1, 2.2, 2.4
+     */
+    ipcMain.handle('tray:showNotification', async (event, notification: {
+        title: string
+        body: string
+        icon?: string
+        silent?: boolean
+    }) => {
+        try {
+            logger.info('IPC: tray:showNotification', { title: notification.title })
+
+            if (!trayManager || !trayManager.isCreated()) {
+                logger.warn('托盘管理器未初始化或托盘未创建')
+                throw new Error('托盘管理器未初始化')
+            }
+
+            trayManager.showNotification(notification)
+            logger.info('托盘通知已显示')
+            return { success: true }
+        } catch (error) {
+            logger.error('显示托盘通知失败', error as Error, {
+                channel: 'tray:showNotification',
+                notification
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 更新托盘菜单
+     * 验证需求: 1.2
+     */
+    ipcMain.handle('tray:updateMenu', async (event, items: any[]) => {
+        try {
+            logger.info('IPC: tray:updateMenu', { itemCount: items.length })
+
+            if (!trayManager || !trayManager.isCreated()) {
+                logger.warn('托盘管理器未初始化或托盘未创建')
+                throw new Error('托盘管理器未初始化')
+            }
+
+            trayManager.updateMenu(items)
+            logger.info('托盘菜单已更新')
+            return { success: true }
+        } catch (error) {
+            logger.error('更新托盘菜单失败', error as Error, {
+                channel: 'tray:updateMenu',
+                itemCount: items.length
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 设置托盘工具提示
+     * 验证需求: 1.1
+     */
+    ipcMain.handle('tray:setToolTip', async (event, tooltip: string) => {
+        try {
+            logger.info('IPC: tray:setToolTip', { tooltip })
+
+            if (!trayManager || !trayManager.isCreated()) {
+                logger.warn('托盘管理器未初始化或托盘未创建')
+                throw new Error('托盘管理器未初始化')
+            }
+
+            trayManager.setToolTip(tooltip)
+            logger.info('托盘工具提示已更新')
+            return { success: true }
+        } catch (error) {
+            logger.error('设置托盘工具提示失败', error as Error, {
+                channel: 'tray:setToolTip',
+                tooltip
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 检查托盘是否已创建
+     * 验证需求: 1.1
+     */
+    ipcMain.handle('tray:isCreated', async () => {
+        try {
+            logger.debug('IPC: tray:isCreated')
+
+            const isCreated = trayManager && trayManager.isCreated()
+            logger.debug('托盘创建状态', { isCreated })
+            return isCreated
+        } catch (error) {
+            logger.error('检查托盘状态失败', error as Error, {
+                channel: 'tray:isCreated'
+            })
+            throw error
+        }
+    })
+
+    // ==================== 快捷键管理处理器 ====================
+
+    /**
+     * 获取所有快捷键配置
+     * 验证需求: 4.4
+     */
+    ipcMain.handle('shortcut:getAllConfigs', async () => {
+        try {
+            logger.debug('IPC: shortcut:getAllConfigs')
+
+            if (!shortcutManager) {
+                logger.warn('快捷键管理器未初始化')
+                return []
+            }
+
+            const configs = shortcutManager.getAllConfigs()
+            logger.debug('获取快捷键配置成功', { count: configs.length })
+            return configs
+        } catch (error) {
+            logger.error('获取快捷键配置失败', error as Error, {
+                channel: 'shortcut:getAllConfigs'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 更新快捷键配置
+     * 验证需求: 4.1, 4.2, 4.3
+     */
+    ipcMain.handle('shortcut:updateConfig', async (event, config: {
+        key: string
+        action: string
+        enabled: boolean
+    }) => {
+        try {
+            logger.info('IPC: shortcut:updateConfig', config)
+
+            if (!shortcutManager) {
+                logger.warn('快捷键管理器未初始化')
+                throw new Error('快捷键管理器未初始化')
+            }
+
+            const success = shortcutManager.updateConfig(config)
+
+            if (success) {
+                logger.info('快捷键配置更新成功', config)
+                return { success: true }
+            } else {
+                logger.warn('快捷键配置更新失败', config)
+                throw new Error('快捷键配置更新失败')
+            }
+        } catch (error) {
+            logger.error('更新快捷键配置失败', error as Error, {
+                channel: 'shortcut:updateConfig',
+                config
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 检查快捷键是否已注册
+     * 验证需求: 3.3
+     */
+    ipcMain.handle('shortcut:isRegistered', async (event, key: string) => {
+        try {
+            logger.debug('IPC: shortcut:isRegistered', { key })
+
+            if (!shortcutManager) {
+                logger.warn('快捷键管理器未初始化')
+                return false
+            }
+
+            const isRegistered = shortcutManager.isRegistered(key)
+            logger.debug('快捷键注册状态', { key, isRegistered })
+            return isRegistered
+        } catch (error) {
+            logger.error('检查快捷键注册状态失败', error as Error, {
+                channel: 'shortcut:isRegistered',
+                key
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取指定动作的快捷键配置
+     * 验证需求: 4.4
+     */
+    ipcMain.handle('shortcut:getConfigByAction', async (event, action: string) => {
+        try {
+            logger.debug('IPC: shortcut:getConfigByAction', { action })
+
+            if (!shortcutManager) {
+                logger.warn('快捷键管理器未初始化')
+                return null
+            }
+
+            const config = shortcutManager.getConfigByAction(action)
+            logger.debug('获取快捷键配置', { action, config })
+            return config
+        } catch (error) {
+            logger.error('获取快捷键配置失败', error as Error, {
+                channel: 'shortcut:getConfigByAction',
+                action
+            })
+            throw error
+        }
+    })
+
+    // ==================== 显示器管理处理器 ====================
+
+    /**
+     * 获取所有显示器信息
+     * 验证需求: 5.1
+     */
+    ipcMain.handle('display:getAllDisplays', async () => {
+        try {
+            logger.debug('IPC: display:getAllDisplays')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return []
+            }
+
+            const displays = displayManager.getAllDisplays()
+            logger.debug('获取显示器信息成功', { count: displays.length })
+            return displays
+        } catch (error) {
+            logger.error('获取显示器信息失败', error as Error, {
+                channel: 'display:getAllDisplays'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取主显示器信息
+     * 验证需求: 5.2
+     */
+    ipcMain.handle('display:getPrimaryDisplay', async () => {
+        try {
+            logger.debug('IPC: display:getPrimaryDisplay')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return null
+            }
+
+            const primaryDisplay = displayManager.getPrimaryDisplay()
+            logger.debug('获取主显示器信息成功', { display: primaryDisplay })
+            return primaryDisplay
+        } catch (error) {
+            logger.error('获取主显示器信息失败', error as Error, {
+                channel: 'display:getPrimaryDisplay'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取指定点所在的显示器
+     * 验证需求: 5.3
+     */
+    ipcMain.handle('display:getDisplayNearestPoint', async (event, point: { x: number; y: number }) => {
+        try {
+            logger.debug('IPC: display:getDisplayNearestPoint', { point })
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return null
+            }
+
+            const display = displayManager.getDisplayNearestPoint(point)
+            logger.debug('获取显示器信息成功', { display })
+            return display
+        } catch (error) {
+            logger.error('获取显示器信息失败', error as Error, {
+                channel: 'display:getDisplayNearestPoint',
+                point
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取当前窗口所在的显示器
+     * 验证需求: 5.3
+     */
+    ipcMain.handle('display:getDisplayForWindow', async (event) => {
+        try {
+            logger.debug('IPC: display:getDisplayForWindow')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return null
+            }
+
+            const window = BrowserWindow.fromWebContents(event.sender)
+            if (!window || window.isDestroyed()) {
+                logger.warn('窗口不存在或已销毁')
+                return null
+            }
+
+            const display = displayManager.getDisplayForWindow(window)
+            logger.debug('获取窗口所在显示器成功', { display })
+            return display
+        } catch (error) {
+            logger.error('获取窗口所在显示器失败', error as Error, {
+                channel: 'display:getDisplayForWindow'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 检查位置是否在显示器范围内
+     * 验证需求: 6.1
+     */
+    ipcMain.handle('display:isPositionInBounds', async (event, position: { x: number; y: number }) => {
+        try {
+            logger.debug('IPC: display:isPositionInBounds', { position })
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return false
+            }
+
+            const isInBounds = displayManager.isPositionInBounds(position)
+            logger.debug('位置验证结果', { position, isInBounds })
+            return isInBounds
+        } catch (error) {
+            logger.error('验证位置失败', error as Error, {
+                channel: 'display:isPositionInBounds',
+                position
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 调整位置到显示器内
+     * 验证需求: 6.2
+     */
+    ipcMain.handle('display:adjustPositionToBounds', async (event, position: { x: number; y: number }, windowSize?: { width: number; height: number }) => {
+        try {
+            logger.debug('IPC: display:adjustPositionToBounds', { position, windowSize })
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return position
+            }
+
+            const adjustedPosition = displayManager.adjustPositionToBounds(position, windowSize)
+            logger.debug('位置已调整', { original: position, adjusted: adjustedPosition })
+            return adjustedPosition
+        } catch (error) {
+            logger.error('调整位置失败', error as Error, {
+                channel: 'display:adjustPositionToBounds',
+                position,
+                windowSize
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取显示器数量
+     * 验证需求: 5.1
+     */
+    ipcMain.handle('display:getDisplayCount', async () => {
+        try {
+            logger.debug('IPC: display:getDisplayCount')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return 0
+            }
+
+            const count = displayManager.getDisplayCount()
+            logger.debug('显示器数量', { count })
+            return count
+        } catch (error) {
+            logger.error('获取显示器数量失败', error as Error, {
+                channel: 'display:getDisplayCount'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 检查是否为多显示器环境
+     * 验证需求: 5.1
+     */
+    ipcMain.handle('display:isMultiDisplay', async () => {
+        try {
+            logger.debug('IPC: display:isMultiDisplay')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return false
+            }
+
+            const isMulti = displayManager.isMultiDisplay()
+            logger.debug('多显示器检测结果', { isMulti })
+            return isMulti
+        } catch (error) {
+            logger.error('检测多显示器失败', error as Error, {
+                channel: 'display:isMultiDisplay'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取显示器信息摘要
+     * 验证需求: 5.1, 5.2
+     */
+    ipcMain.handle('display:getDisplaySummary', async () => {
+        try {
+            logger.debug('IPC: display:getDisplaySummary')
+
+            if (!displayManager) {
+                logger.warn('显示器管理器未初始化')
+                return '显示器管理器未初始化'
+            }
+
+            const summary = displayManager.getDisplaySummary()
+            logger.debug('显示器摘要', { summary })
+            return summary
+        } catch (error) {
+            logger.error('获取显示器摘要失败', error as Error, {
+                channel: 'display:getDisplaySummary'
+            })
+            throw error
+        }
+    })
+
+    // ==================== 自启动管理处理器 ====================
+
+    /**
+     * 启用开机自启动
+     * 验证需求: 7.2
+     */
+    ipcMain.handle('autoLaunch:enable', async (event, hidden: boolean = false) => {
+        try {
+            logger.info('IPC: autoLaunch:enable', { hidden })
+
+            if (!autoLauncher) {
+                logger.warn('自启动管理器未初始化')
+                throw new Error('自启动管理器未初始化')
+            }
+
+            const success = await autoLauncher.enable(hidden)
+
+            if (success) {
+                logger.info('开机自启动已启用', { hidden })
+                return { success: true, enabled: true, hidden }
+            } else {
+                logger.warn('启用开机自启动失败')
+                throw new Error('启用开机自启动失败')
+            }
+        } catch (error) {
+            logger.error('启用开机自启动失败', error as Error, {
+                channel: 'autoLaunch:enable',
+                hidden
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 禁用开机自启动
+     * 验证需求: 7.3
+     */
+    ipcMain.handle('autoLaunch:disable', async () => {
+        try {
+            logger.info('IPC: autoLaunch:disable')
+
+            if (!autoLauncher) {
+                logger.warn('自启动管理器未初始化')
+                throw new Error('自启动管理器未初始化')
+            }
+
+            const success = await autoLauncher.disable()
+
+            if (success) {
+                logger.info('开机自启动已禁用')
+                return { success: true, enabled: false }
+            } else {
+                logger.warn('禁用开机自启动失败')
+                throw new Error('禁用开机自启动失败')
+            }
+        } catch (error) {
+            logger.error('禁用开机自启动失败', error as Error, {
+                channel: 'autoLaunch:disable'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 检查是否已启用开机自启动
+     * 验证需求: 7.4
+     */
+    ipcMain.handle('autoLaunch:isEnabled', async () => {
+        try {
+            logger.debug('IPC: autoLaunch:isEnabled')
+
+            if (!autoLauncher) {
+                logger.warn('自启动管理器未初始化')
+                return false
+            }
+
+            const isEnabled = await autoLauncher.isEnabled()
+            logger.debug('开机自启动状态', { isEnabled })
+            return isEnabled
+        } catch (error) {
+            logger.error('检查开机自启动状态失败', error as Error, {
+                channel: 'autoLaunch:isEnabled'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取自启动配置
+     * 验证需求: 7.4
+     */
+    ipcMain.handle('autoLaunch:getConfig', async () => {
+        try {
+            logger.debug('IPC: autoLaunch:getConfig')
+
+            if (!autoLauncher) {
+                logger.warn('自启动管理器未初始化')
+                return {
+                    enabled: false,
+                    hidden: false
+                }
+            }
+
+            const config = autoLauncher.getConfig()
+            logger.debug('自启动配置', { config })
+            return config
+        } catch (error) {
+            logger.error('获取自启动配置失败', error as Error, {
+                channel: 'autoLaunch:getConfig'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 更新自启动配置
+     * 验证需求: 7.1, 7.2, 7.3, 7.4
+     */
+    ipcMain.handle('autoLaunch:updateConfig', async (event, config: {
+        enabled?: boolean
+        hidden?: boolean
+    }) => {
+        try {
+            logger.info('IPC: autoLaunch:updateConfig', config)
+
+            if (!autoLauncher) {
+                logger.warn('自启动管理器未初始化')
+                throw new Error('自启动管理器未初始化')
+            }
+
+            const success = await autoLauncher.updateConfig(config)
+
+            if (success) {
+                logger.info('自启动配置更新成功', config)
+                const updatedConfig = autoLauncher.getConfig()
+                return { success: true, config: updatedConfig }
+            } else {
+                logger.warn('自启动配置更新失败', config)
+                throw new Error('自启动配置更新失败')
+            }
+        } catch (error) {
+            logger.error('更新自启动配置失败', error as Error, {
+                channel: 'autoLaunch:updateConfig',
+                config
+            })
+            throw error
+        }
+    })
+
+    // ==================== 主题管理处理器 ====================
+
+    /**
+     * 获取当前主题
+     * 验证需求: 9.1
+     */
+    ipcMain.handle('theme:get-current', async () => {
+        try {
+            logger.debug('IPC: theme:get-current')
+
+            if (!themeAdapter) {
+                logger.warn('主题适配器未初始化')
+                return 'system'
+            }
+
+            const currentTheme = themeAdapter.getCurrentTheme()
+            logger.debug('当前主题', { currentTheme })
+            return currentTheme
+        } catch (error) {
+            logger.error('获取当前主题失败', error as Error, {
+                channel: 'theme:get-current'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取主题配置
+     * 验证需求: 9.4
+     */
+    ipcMain.handle('theme:get-config', async () => {
+        try {
+            logger.debug('IPC: theme:get-config')
+
+            if (!themeAdapter) {
+                logger.warn('主题适配器未初始化')
+                return {
+                    mode: 'system',
+                    followSystem: true
+                }
+            }
+
+            const config = themeAdapter.getConfig()
+            logger.debug('主题配置', { config })
+            return config
+        } catch (error) {
+            logger.error('获取主题配置失败', error as Error, {
+                channel: 'theme:get-config'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 设置主题
+     * 验证需求: 9.3, 9.4
+     */
+    ipcMain.handle('theme:set', async (event, mode: 'light' | 'dark' | 'system') => {
+        try {
+            logger.info('IPC: theme:set', { mode })
+
+            if (!themeAdapter) {
+                logger.warn('主题适配器未初始化')
+                throw new Error('主题适配器未初始化')
+            }
+
+            themeAdapter.setTheme(mode)
+            logger.info('主题已设置', { mode })
+            return { success: true, mode }
+        } catch (error) {
+            logger.error('设置主题失败', error as Error, {
+                channel: 'theme:set',
+                mode
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 切换主题
+     * 验证需求: 9.3
+     */
+    ipcMain.handle('theme:toggle', async () => {
+        try {
+            logger.info('IPC: theme:toggle')
+
+            if (!themeAdapter) {
+                logger.warn('主题适配器未初始化')
+                throw new Error('主题适配器未初始化')
+            }
+
+            themeAdapter.toggleTheme()
+            const currentTheme = themeAdapter.getCurrentTheme()
+            logger.info('主题已切换', { currentTheme })
+            return currentTheme
+        } catch (error) {
+            logger.error('切换主题失败', error as Error, {
+                channel: 'theme:toggle'
+            })
+            throw error
+        }
+    })
+
+    /**
+     * 获取系统主题
+     * 验证需求: 9.1
+     */
+    ipcMain.handle('theme:get-system', async () => {
+        try {
+            logger.debug('IPC: theme:get-system')
+
+            if (!themeAdapter) {
+                logger.warn('主题适配器未初始化')
+                return 'light'
+            }
+
+            const systemTheme = themeAdapter.getSystemTheme()
+            logger.debug('系统主题', { systemTheme })
+            return systemTheme
+        } catch (error) {
+            logger.error('获取系统主题失败', error as Error, {
+                channel: 'theme:get-system'
+            })
+            throw error
+        }
+    })
+
     logger.info('IPC 处理器注册完成')
 }
 
@@ -1738,28 +2674,122 @@ function sendToRenderer(window: BrowserWindow, channel: string, data?: any): voi
 // 创建全局窗口管理器实例
 let windowManager: WindowManager
 
+// 创建全局托盘管理器实例
+let trayManager: TrayManager
+
+// 创建全局快捷键管理器实例
+let shortcutManager: ShortcutManager
+
+// 创建全局显示器管理器实例
+let displayManager: DisplayManager
+
+// 创建全局自启动管理器实例
+let autoLauncher: AutoLauncher
+
+// 创建全局窗口状态管理器实例
+let windowStateManager: WindowStateManager
+
+// 创建全局主题适配器实例
+let themeAdapter: ThemeAdapter
+
+/**
+ * 设置托盘事件监听器
+ * @param trayManager 托盘管理器实例
+ * @param windowManager 窗口管理器实例
+ * 验证需求: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4
+ */
+function setupTrayEvents(trayManager: TrayManager, windowManager: WindowManager): void {
+    logger.info('设置托盘事件监听器')
+
+    // 监听创建窗口事件（验证需求: 1.3）
+    trayManager.on('create-window', () => {
+        logger.info('托盘事件：创建新窗口')
+
+        try {
+            // 检查窗口数量限制
+            const currentWindowCount = windowManager.getAllWindows().length
+            const maxWindows = 20
+
+            if (currentWindowCount >= maxWindows) {
+                logger.warn('已达到窗口数量上限，无法创建新窗口', {
+                    current: currentWindowCount,
+                    max: maxWindows
+                })
+
+                // 显示通知（验证需求: 2.1, 2.2）
+                trayManager.showNotification({
+                    title: '无法创建新便签',
+                    body: `已达到窗口数量上限（${maxWindows}个）`,
+                    silent: false
+                })
+
+                return
+            }
+
+            // 创建新窗口
+            const position = windowManager.calculateNewWindowPosition()
+            const windowId = `window-${Date.now()}`
+            const noteId = `note-${Date.now()}`
+
+            windowManager.createWindow({
+                windowId,
+                noteId,
+                position,
+                size: { width: 300, height: 300 }
+            })
+
+            // 显示通知（验证需求: 2.1）
+            trayManager.showNotification({
+                title: '已创建新便签',
+                body: '便签已成功创建',
+                silent: true
+            })
+
+            logger.info('新窗口创建成功', { windowId })
+        } catch (error) {
+            logger.error('托盘创建窗口失败', error as Error)
+
+            // 显示错误通知（验证需求: 2.2）
+            trayManager.showNotification({
+                title: '创建便签失败',
+                body: '无法创建新便签，请重试',
+                silent: false
+            })
+        }
+    })
+
+    // 监听退出应用事件（验证需求: 1.4）
+    trayManager.on('quit-app', () => {
+        logger.info('托盘事件：退出应用')
+        app.quit()
+    })
+
+    logger.info('托盘事件监听器设置完成')
+}
+
 /**
  * 注册全局快捷键
+ * @param shortcutManager 快捷键管理器实例
  * @param windowManager 窗口管理器实例
- * 验证需求: 11.1, 11.2, 11.3, 11.4, 11.5
+ * 验证需求: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4
  */
-function registerGlobalShortcuts(windowManager: WindowManager): void {
+function registerGlobalShortcuts(shortcutManager: ShortcutManager, windowManager: WindowManager): void {
     logger.info('注册全局快捷键')
 
     try {
-        // 根据平台选择快捷键
-        // macOS: Cmd+N, Windows/Linux: Ctrl+N
-        const shortcut = isMacOS() ? 'Cmd+N' : 'Ctrl+N'
-        logger.info(`注册快捷键: ${shortcut}`)
+        // 根据平台选择默认快捷键
+        // macOS: Cmd+Shift+N, Windows/Linux: Ctrl+Shift+N
+        const defaultShortcut = isMacOS() ? 'Cmd+Shift+N' : 'Ctrl+Shift+N'
+        logger.info(`默认快捷键: ${defaultShortcut}`)
 
-        // 注册快捷键（验证需求: 11.1）
-        const registered = globalShortcut.register(shortcut, () => {
-            logger.info(`快捷键 ${shortcut} 被触发`)
+        // 定义快捷键处理函数
+        const createNoteHandler = () => {
+            logger.info('快捷键触发：创建新便签')
 
             try {
                 // 检查窗口数量限制
                 const currentWindowCount = windowManager.getAllWindows().length
-                const maxWindows = 20 // 与多窗口配置保持一致
+                const maxWindows = 20
 
                 if (currentWindowCount >= maxWindows) {
                     logger.warn('已达到窗口数量上限，无法创建新窗口', {
@@ -1769,61 +2799,62 @@ function registerGlobalShortcuts(windowManager: WindowManager): void {
                     return
                 }
 
-                // 通过快捷键创建新窗口（验证需求: 11.2, 11.3, 11.4）
+                // 通过快捷键创建新窗口
                 windowManager.createWindowFromShortcut()
             } catch (error) {
                 logger.error('快捷键创建窗口失败', error as Error)
             }
-        })
+        }
 
-        // 检查注册是否成功（验证需求: 11.5）
-        if (registered) {
-            logger.info(`快捷键 ${shortcut} 注册成功`)
-        } else {
-            // 快捷键注册失败，可能被其他应用占用
-            logger.warn(`快捷键 ${shortcut} 注册失败，可能被其他应用占用`, {
-                shortcut,
-                platform: process.platform
-            })
+        // 检查是否已有配置
+        const existingConfig = shortcutManager.getConfigByAction('createNote')
 
-            // 尝试注册备用快捷键
-            const alternativeShortcut = isMacOS() ? 'Cmd+Shift+N' : 'Ctrl+Shift+N'
-            logger.info(`尝试注册备用快捷键: ${alternativeShortcut}`)
+        if (existingConfig && existingConfig.enabled) {
+            // 使用已保存的配置
+            logger.info(`使用已保存的快捷键配置: ${existingConfig.key}`)
+            const registered = shortcutManager.register(existingConfig.key, 'createNote', createNoteHandler)
 
-            const alternativeRegistered = globalShortcut.register(alternativeShortcut, () => {
-                logger.info(`备用快捷键 ${alternativeShortcut} 被触发`)
-
-                try {
-                    // 检查窗口数量限制
-                    const currentWindowCount = windowManager.getAllWindows().length
-                    const maxWindows = 20
-
-                    if (currentWindowCount >= maxWindows) {
-                        logger.warn('已达到窗口数量上限，无法创建新窗口', {
-                            current: currentWindowCount,
-                            max: maxWindows
-                        })
-                        return
-                    }
-
-                    windowManager.createWindowFromShortcut()
-                } catch (error) {
-                    logger.error('备用快捷键创建窗口失败', error as Error)
-                }
-            })
-
-            if (alternativeRegistered) {
-                logger.info(`备用快捷键 ${alternativeShortcut} 注册成功`)
+            if (registered) {
+                logger.info(`快捷键注册成功: ${existingConfig.key}`)
             } else {
-                logger.error(`备用快捷键 ${alternativeShortcut} 也注册失败`)
+                logger.warn(`快捷键注册失败: ${existingConfig.key}，尝试使用默认快捷键`)
+                // 尝试注册默认快捷键
+                const defaultRegistered = shortcutManager.register(defaultShortcut, 'createNote', createNoteHandler)
+
+                if (defaultRegistered) {
+                    logger.info(`默认快捷键注册成功: ${defaultShortcut}`)
+                } else {
+                    logger.error(`默认快捷键也注册失败: ${defaultShortcut}`)
+                }
+            }
+        } else {
+            // 注册默认快捷键
+            logger.info(`注册默认快捷键: ${defaultShortcut}`)
+            const registered = shortcutManager.register(defaultShortcut, 'createNote', createNoteHandler)
+
+            if (registered) {
+                logger.info(`快捷键注册成功: ${defaultShortcut}`)
+            } else {
+                logger.warn(`快捷键注册失败，可能被其他应用占用: ${defaultShortcut}`)
+
+                // 尝试备用快捷键
+                const alternativeShortcut = isMacOS() ? 'Cmd+Alt+N' : 'Ctrl+Alt+N'
+                logger.info(`尝试注册备用快捷键: ${alternativeShortcut}`)
+
+                const alternativeRegistered = shortcutManager.register(alternativeShortcut, 'createNote', createNoteHandler)
+
+                if (alternativeRegistered) {
+                    logger.info(`备用快捷键注册成功: ${alternativeShortcut}`)
+                } else {
+                    logger.error(`备用快捷键也注册失败: ${alternativeShortcut}`)
+                }
             }
         }
 
         // 记录所有已注册的快捷键
-        const registeredShortcuts = globalShortcut.isRegistered(shortcut)
-        logger.debug('快捷键注册状态', {
-            shortcut,
-            registered: registeredShortcuts
+        const allConfigs = shortcutManager.getAllConfigs()
+        logger.info(`已注册 ${allConfigs.length} 个快捷键`, {
+            shortcuts: allConfigs.map(c => ({ key: c.key, action: c.action, enabled: c.enabled }))
         })
     } catch (error) {
         logger.error('注册全局快捷键失败', error as Error)
@@ -1832,13 +2863,13 @@ function registerGlobalShortcuts(windowManager: WindowManager): void {
 
 /**
  * 注销所有全局快捷键
- * 验证需求: 11.5
+ * 验证需求: 3.4
  */
-function unregisterGlobalShortcuts(): void {
+function unregisterGlobalShortcuts(shortcutManager: ShortcutManager): void {
     logger.info('注销所有全局快捷键')
 
     try {
-        globalShortcut.unregisterAll()
+        shortcutManager.unregisterAll()
         logger.info('全局快捷键已注销')
     } catch (error) {
         logger.error('注销全局快捷键失败', error as Error)
@@ -1846,7 +2877,7 @@ function unregisterGlobalShortcuts(): void {
 }
 
 // 应用就绪时初始化
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     const environment = isDevelopment() ? 'development' : 'production'
 
     logger.info('='.repeat(50))
@@ -1866,19 +2897,122 @@ app.whenReady().then(() => {
         // 应用平台特定配置
         applyPlatformSpecificConfig()
 
+        // 创建显示器管理器（验证需求: 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3, 6.4）
+        logger.info('创建显示器管理器')
+        displayManager = new DisplayManager()
+        logger.info('显示器管理器创建成功')
+        logger.info(displayManager.getDisplaySummary())
+
+        // 创建窗口状态管理器（验证需求: 8.1, 8.2, 8.3, 8.4）
+        logger.info('创建窗口状态管理器')
+        windowStateManager = new WindowStateManager(displayManager)
+        logger.info('窗口状态管理器创建成功')
+        logger.info(windowStateManager.getStateSummary())
+
         // 创建窗口管理器
         logger.info('创建窗口管理器')
         windowManager = new WindowManager()
 
+        // 将 DisplayManager 集成到 WindowManager（验证需求: 5.1, 5.2, 5.3, 5.4）
+        windowManager.setDisplayManager(displayManager)
+
+        // 将 WindowStateManager 集成到 WindowManager（验证需求: 8.1, 8.2, 8.3, 8.4）
+        windowManager.setWindowStateManager(windowStateManager)
+
+        // 监听显示器变更事件（验证需求: 5.4, 6.3, 6.4）
+        displayManager.on('display-changed', (event: any) => {
+            logger.info('显示器配置已变更', {
+                type: event.type,
+                displayId: event.display.id
+            })
+            logger.info('更新后的显示器信息:', displayManager.getDisplaySummary())
+
+            // 广播显示器变更事件到所有窗口
+            windowManager.broadcastToAll('display:changed', event)
+        })
+
+        displayManager.on('windows-migrated', (event: any) => {
+            logger.info(`已迁移 ${event.count} 个窗口到有效显示器`)
+
+            // 通知所有窗口
+            windowManager.broadcastToAll('display:windows-migrated', event)
+        })
+
+        // 创建托盘管理器（验证需求: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4）
+        logger.info('创建托盘管理器')
+        trayManager = new TrayManager({
+            tooltip: '便签应用',
+            enableNotifications: true
+        })
+
+        // 创建托盘图标
+        trayManager.createTray()
+
+        // 监听托盘事件
+        setupTrayEvents(trayManager, windowManager)
+
+        // 创建快捷键管理器（验证需求: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4）
+        logger.info('创建快捷键管理器')
+        shortcutManager = new ShortcutManager()
+
+        // 创建自启动管理器（验证需求: 7.1, 7.2, 7.3, 7.4）
+        logger.info('创建自启动管理器')
+        autoLauncher = new AutoLauncher()
+        logger.info('自启动管理器创建成功')
+
+        // 加载自启动配置（验证需求: 7.4）
+        const autoLaunchConfig = autoLauncher.getConfig()
+        logger.info('自启动配置已加载', autoLaunchConfig)
+
+        // 检查实际的自启动状态（验证需求: 7.4）
+        const isAutoLaunchEnabled = await autoLauncher.isEnabled()
+        logger.info('开机自启动状态', { isEnabled: isAutoLaunchEnabled })
+
+        // 创建主题适配器（验证需求: 9.1, 9.2, 9.3, 9.4）
+        logger.info('创建主题适配器')
+        themeAdapter = new ThemeAdapter()
+        logger.info('主题适配器创建成功')
+
+        // 检测系统主题（验证需求: 9.1）
+        const currentTheme = themeAdapter.getCurrentTheme()
+        const systemTheme = themeAdapter.getSystemTheme()
+        const themeConfig = themeAdapter.getConfig()
+        logger.info('系统主题已检测', {
+            currentTheme,
+            systemTheme,
+            config: themeConfig
+        })
+
         // 注册 IPC 处理器
         registerIPCHandlers(windowManager)
 
-        // 注册全局快捷键（验证需求: 11.1, 11.2, 11.3, 11.4, 11.5）
-        registerGlobalShortcuts(windowManager)
+        // 注册全局快捷键（验证需求: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4）
+        registerGlobalShortcuts(shortcutManager, windowManager)
 
-        // 尝试恢复窗口状态
+        // 清理过期的窗口状态（验证需求: 8.4）
+        logger.info('清理过期的窗口状态')
+        const cleanedCount = windowStateManager.cleanupOldStates()
+        if (cleanedCount > 0) {
+            logger.info(`已清理 ${cleanedCount} 个过期的窗口状态`)
+        }
+
+        // 设置定时清理任务（验证需求: 8.4）
+        // 每24小时清理一次过期状态
+        const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000 // 24小时
+        setInterval(() => {
+            logger.info('执行定时清理任务')
+            const cleaned = windowStateManager.cleanupOldStates()
+            if (cleaned > 0) {
+                logger.info(`定时清理：已清理 ${cleaned} 个过期的窗口状态`)
+            } else {
+                logger.debug('定时清理：没有过期的窗口状态')
+            }
+        }, CLEANUP_INTERVAL)
+        logger.info(`已设置定时清理任务，间隔: ${CLEANUP_INTERVAL / 1000 / 60 / 60} 小时`)
+
+        // 尝试恢复窗口状态（验证需求: 8.2, 8.3）
         logger.info('尝试恢复窗口状态')
-        const savedState = windowManager.restoreWindowState()
+        const savedState = windowManager.restoreWindowStateFromManager()
 
         // 创建主窗口
         if (savedState) {
@@ -1957,41 +3091,64 @@ app.on('window-all-closed', () => {
 /**
  * 应用退出前事件处理
  * 保存所有窗口的最终状态
- * 验证需求: 5.4
+ * 验证需求: 5.4, 8.1
  */
 app.on('before-quit', (event) => {
     logger.info('应用即将退出')
     logger.debug(`平台: ${getCurrentPlatform()}`)
 
     try {
-        // 注销所有全局快捷键（验证需求: 11.5）
-        unregisterGlobalShortcuts()
+        // 注销所有全局快捷键（验证需求: 3.4）
+        if (shortcutManager) {
+            unregisterGlobalShortcuts(shortcutManager)
+        }
 
-        // 保存所有窗口的最终状态
-        const windows = windowManager.getAllWindows()
-        logger.info(`保存 ${windows.length} 个窗口的最终状态`)
+        // 销毁托盘（验证需求: 1.4）
+        if (trayManager && trayManager.isCreated()) {
+            logger.info('销毁托盘')
+            trayManager.destroy()
+        }
 
-        windows.forEach((window) => {
-            if (!window.isDestroyed()) {
-                windowManager.saveWindowState(window.id)
-                logger.debug(`已保存窗口 ${window.id} 的状态`)
-            }
-        })
+        // 保存所有窗口的最终状态（验证需求: 8.1）
+        if (windowManager) {
+            logger.info('保存所有窗口的最终状态')
+            windowManager.saveAllWindowStates()
+        }
 
-        logger.info('所有窗口状态已保存')
+        // 销毁窗口状态管理器（验证需求: 8.1）
+        if (windowStateManager) {
+            logger.info('销毁窗口状态管理器')
+            windowStateManager.destroy()
+        }
+
+        // 销毁显示器管理器（验证需求: 5.4）
+        if (displayManager) {
+            logger.info('销毁显示器管理器')
+            displayManager.destroy()
+        }
+
+        // 销毁主题适配器（验证需求: 9.4）
+        if (themeAdapter) {
+            logger.info('销毁主题适配器')
+            themeAdapter.destroy()
+        }
+
+        logger.info('所有资源已清理')
     } catch (error) {
-        logger.error('保存窗口状态失败', error as Error)
+        logger.error('清理资源失败', error as Error)
     }
 })
 
 /**
  * 应用即将退出事件处理
  * 确保快捷键被注销
- * 验证需求: 11.5
+ * 验证需求: 3.4
  */
 app.on('will-quit', () => {
     logger.info('应用即将退出，确保快捷键已注销')
-    unregisterGlobalShortcuts()
+    if (shortcutManager) {
+        unregisterGlobalShortcuts(shortcutManager)
+    }
 })
 
 // ==================== 全局错误处理 ====================

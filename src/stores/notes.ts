@@ -1058,6 +1058,33 @@ export const useNotesStore = defineStore('notes', () => {
         }
     )
 
+    // ==================== 便捷方法 ====================
+
+    /**
+     * 创建新便利贴（简化版）
+     * 用于主窗口快速创建便利贴
+     */
+    const createNote = (): Note => {
+        return addNote({
+            title: '新便利贴',
+            content: ''
+        })
+    }
+
+    /**
+     * 更新便利贴标题
+     */
+    const updateNoteTitle = (id: string, title: string): void => {
+        updateNote(id, { title })
+    }
+
+    /**
+     * 更新便利贴内容
+     */
+    const updateNoteContent = (id: string, content: string): void => {
+        updateNote(id, { content })
+    }
+
     // ==================== 返回 Store 接口 ====================
 
     return {
@@ -1083,6 +1110,9 @@ export const useNotesStore = defineStore('notes', () => {
         updateNote,
         deleteNote,
         togglePin,
+        createNote,
+        updateNoteTitle,
+        updateNoteContent,
 
         // 持久化操作
         loadFromStorage,

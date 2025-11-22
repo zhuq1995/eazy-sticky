@@ -192,11 +192,11 @@ export function useElectron(): UseElectronReturn {
         }
 
         try {
-            // 调用 Electron API 设置窗口位置
-            await window.electronAPI.window.setPosition(x, y)
-
-            // 更新本地状态
-            windowPosition.value = { x, y }
+            // 直接调用 Electron API 设置窗口位置（不更新本地状态，避免触发重绘）
+            // 不等待完成，以提高响应速度
+            window.electronAPI.window.setPosition(x, y).catch(error => {
+                console.error('更新窗口位置失败:', error)
+            })
         } catch (error) {
             console.error('更新窗口位置失败:', error)
             throw error

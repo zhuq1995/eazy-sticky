@@ -67,6 +67,11 @@ export function useDraggable(
     const offset = ref<Position>({ x: 0, y: 0 })
 
     /**
+     * 最后的拖拽位置（用于保存）
+     */
+    const lastDragPosition = ref<Position>({ x: 0, y: 0 })
+
+    /**
      * requestAnimationFrame ID，用于取消动画帧
      */
     let rafId: number | null = null
@@ -190,6 +195,11 @@ export function useDraggable(
 
         const eventTarget = e.target as HTMLElement
 
+        // 检查是否点击了按钮或其他交互元素
+        if (eventTarget.tagName === 'BUTTON' || eventTarget.closest('button')) {
+            return
+        }
+
         // 需求 1.5: 检查是否在可编辑区域
         if (isEditableElement(eventTarget)) {
             return
@@ -244,15 +254,22 @@ export function useDraggable(
             }
 
             // 需求 2.1-2.5: 边界检查
-            position.value = checkBoundary(newPos)
+            const checkedPos = checkBoundary(newPos)
 
-            // 如果在 Electron 环境中，更新窗口位置
+            // 记录最后的拖拽位置
+            lastDragPosition.value = checkedPos
+
+            // 在 Electron 环境中，只更新窗口位置，不更新本地状态（避免重绘）
             if (isElectron.value) {
-                updateWindowPosition(position.value.x, position.value.y)
+                // 直接更新窗口位置，不等待响应
+                updateWindowPosition(checkedPos.x, checkedPos.y)
+            } else {
+                // 在浏览器环境中，更新本地状态以触发 CSS transform
+                position.value = checkedPos
             }
 
             // 调用用户提供的 onMove 回调
-            options.onMove?.(position.value)
+            options.onMove?.(checkedPos)
 
             rafId = null
         })
@@ -282,8 +299,13 @@ export function useDraggable(
             rafId = null
         }
 
+        // 在浏览器环境中更新最终位置
+        if (!isElectron.value) {
+            position.value = lastDragPosition.value
+        }
+
         // 需求 10.3: 使用防抖机制延迟保存位置
-        debouncedSave(position.value)
+        debouncedSave(lastDragPosition.value)
     }
 
     // ==================== 生命周期钩子 ====================
@@ -330,12 +352,23 @@ export function useDraggable(
      * 需求: 12.3 - 使用 CSS transform 而非 top/left
      * 需求: 12.4 - 拖拽中禁用过渡动画
      * 需求: 12.5 - 拖拽后恢复过渡动画
+     * 
+     * 注意：在 Electron 环境中，窗口位置由 Electron 管理，不使用 transform
      */
-    const style = computed<CSSProperties>(() => ({
-        transform: `translate(${position.value.x}px, ${position.value.y}px)`,
-        // 需求 12.4, 12.5: 拖拽时禁用过渡，结束后恢复
-        transition: isDragging.value ? 'none' : 'transform 0.2s ease'
-    }))
+    const style = computed<CSSProperties>(() => {
+        // 在 Electron 环境中，不使用 CSS transform，窗口位置由 Electron 管理
+        if (isElectron.value) {
+            return {
+                transition: isDragging.value ? 'none' : 'all 0.2s ease'
+            }
+        }
+
+        // 在浏览器环境中，使用 CSS transform
+        return {
+            transform: `translate(${position.value.x}px, ${position.value.y}px)`,
+            transition: isDragging.value ? 'none' : 'transform 0.2s ease'
+        }
+    })
 
     // ==================== 手动操作方法 ====================
 

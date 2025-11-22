@@ -154,6 +154,205 @@ const electronAPI: ElectronAPI = {
         getPath: (name: string) => ipcRenderer.invoke('system:getPath', name)
     },
 
+    // 托盘管理 API
+    tray: {
+        /**
+         * 显示托盘通知
+         * @param notification - 通知配置
+         */
+        showNotification: (notification: {
+            title: string
+            body: string
+            icon?: string
+            silent?: boolean
+        }) => ipcRenderer.invoke('tray:showNotification', notification),
+
+        /**
+         * 更新托盘菜单
+         * @param items - 菜单项配置数组
+         */
+        updateMenu: (items: any[]) => ipcRenderer.invoke('tray:updateMenu', items),
+
+        /**
+         * 设置托盘工具提示
+         * @param tooltip - 工具提示文本
+         */
+        setToolTip: (tooltip: string) => ipcRenderer.invoke('tray:setToolTip', tooltip),
+
+        /**
+         * 检查托盘是否已创建
+         * @returns 托盘是否存在
+         */
+        isCreated: () => ipcRenderer.invoke('tray:isCreated')
+    },
+
+    // 快捷键管理 API
+    shortcut: {
+        /**
+         * 获取所有快捷键配置
+         * @returns 快捷键配置数组
+         */
+        getAllConfigs: () => ipcRenderer.invoke('shortcut:getAllConfigs'),
+
+        /**
+         * 更新快捷键配置
+         * @param config - 快捷键配置
+         */
+        updateConfig: (config: {
+            key: string
+            action: string
+            enabled: boolean
+        }) => ipcRenderer.invoke('shortcut:updateConfig', config),
+
+        /**
+         * 检查快捷键是否已注册
+         * @param key - 快捷键
+         * @returns 是否已注册
+         */
+        isRegistered: (key: string) => ipcRenderer.invoke('shortcut:isRegistered', key),
+
+        /**
+         * 获取指定动作的快捷键配置
+         * @param action - 动作名称
+         * @returns 快捷键配置或 null
+         */
+        getConfigByAction: (action: string) => ipcRenderer.invoke('shortcut:getConfigByAction', action)
+    },
+
+    // 显示器管理 API
+    display: {
+        /**
+         * 获取所有显示器信息
+         * @returns 显示器信息数组
+         */
+        getAllDisplays: () => ipcRenderer.invoke('display:getAllDisplays'),
+
+        /**
+         * 获取主显示器信息
+         * @returns 主显示器信息
+         */
+        getPrimaryDisplay: () => ipcRenderer.invoke('display:getPrimaryDisplay'),
+
+        /**
+         * 获取指定点所在的显示器
+         * @param point - 坐标点
+         * @returns 显示器信息
+         */
+        getDisplayNearestPoint: (point: { x: number; y: number }) => ipcRenderer.invoke('display:getDisplayNearestPoint', point),
+
+        /**
+         * 获取当前窗口所在的显示器
+         * @returns 显示器信息
+         */
+        getDisplayForWindow: () => ipcRenderer.invoke('display:getDisplayForWindow'),
+
+        /**
+         * 检查位置是否在显示器范围内
+         * @param position - 位置坐标
+         * @returns 是否在范围内
+         */
+        isPositionInBounds: (position: { x: number; y: number }) => ipcRenderer.invoke('display:isPositionInBounds', position),
+
+        /**
+         * 调整位置到显示器内
+         * @param position - 原始位置
+         * @param windowSize - 窗口尺寸（可选）
+         * @returns 调整后的位置
+         */
+        adjustPositionToBounds: (position: { x: number; y: number }, windowSize?: { width: number; height: number }) =>
+            ipcRenderer.invoke('display:adjustPositionToBounds', position, windowSize),
+
+        /**
+         * 获取显示器数量
+         * @returns 显示器数量
+         */
+        getDisplayCount: () => ipcRenderer.invoke('display:getDisplayCount'),
+
+        /**
+         * 检查是否为多显示器环境
+         * @returns 是否为多显示器
+         */
+        isMultiDisplay: () => ipcRenderer.invoke('display:isMultiDisplay'),
+
+        /**
+         * 获取显示器信息摘要
+         * @returns 显示器信息摘要字符串
+         */
+        getDisplaySummary: () => ipcRenderer.invoke('display:getDisplaySummary')
+    },
+
+    // 自启动管理 API
+    autoLaunch: {
+        /**
+         * 启用开机自启动
+         * @param hidden - 是否隐藏启动（可选，默认false）
+         * @returns 操作结果
+         */
+        enable: (hidden?: boolean) => ipcRenderer.invoke('autoLaunch:enable', hidden),
+
+        /**
+         * 禁用开机自启动
+         * @returns 操作结果
+         */
+        disable: () => ipcRenderer.invoke('autoLaunch:disable'),
+
+        /**
+         * 检查是否已启用开机自启动
+         * @returns 是否已启用
+         */
+        isEnabled: () => ipcRenderer.invoke('autoLaunch:isEnabled'),
+
+        /**
+         * 获取自启动配置
+         * @returns 自启动配置
+         */
+        getConfig: () => ipcRenderer.invoke('autoLaunch:getConfig'),
+
+        /**
+         * 更新自启动配置
+         * @param config - 配置对象
+         * @returns 操作结果
+         */
+        updateConfig: (config: {
+            enabled?: boolean
+            hidden?: boolean
+        }) => ipcRenderer.invoke('autoLaunch:updateConfig', config)
+    },
+
+    // 主题管理 API
+    theme: {
+        /**
+         * 获取当前主题
+         * @returns 当前主题模式
+         */
+        getCurrent: () => ipcRenderer.invoke('theme:get-current'),
+
+        /**
+         * 获取主题配置
+         * @returns 主题配置
+         */
+        getConfig: () => ipcRenderer.invoke('theme:get-config'),
+
+        /**
+         * 设置主题
+         * @param mode - 主题模式（'light' | 'dark' | 'system'）
+         * @returns 操作结果
+         */
+        set: (mode: 'light' | 'dark' | 'system') => ipcRenderer.invoke('theme:set', mode),
+
+        /**
+         * 切换主题（在 light 和 dark 之间切换）
+         * @returns 切换后的主题
+         */
+        toggle: () => ipcRenderer.invoke('theme:toggle'),
+
+        /**
+         * 获取系统主题
+         * @returns 系统主题（'light' | 'dark'）
+         */
+        getSystem: () => ipcRenderer.invoke('theme:get-system')
+    },
+
     // 事件监听 API
     /**
      * 监听主进程发送的事件

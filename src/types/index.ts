@@ -3,17 +3,35 @@
  * 定义应用中使用的所有 TypeScript 接口和类型
  */
 
-// 位置坐标接口
-export interface Position {
-    x: number
-    y: number
-}
+// ==================== 导出 Electron 相关类型 ====================
+// 从 electron.d.ts 导出所有 Electron 相关类型
+export type {
+    Position,
+    Size,
+    WindowBounds,
+    WindowState,
+    WindowInfo,
+    WindowCreateOptions,
+    TrayMenuItem,
+    TrayNotification,
+    TrayManagerConfig,
+    ShortcutConfig,
+    ShortcutConflict,
+    DisplayInfo,
+    DisplayChangeEvent,
+    WindowsMigratedEvent,
+    AutoLaunchConfig,
+    ThemeMode,
+    ThemeConfig,
+    ElectronAPI
+} from './electron'
 
-// 尺寸接口
-export interface Size {
-    width: number
-    height: number
-}
+// 重新导出基础类型供本地使用
+import type { Position as Pos, Size as Sz, WindowState as WS, WindowInfo as WI } from './electron'
+type Position = Pos
+type Size = Sz
+type WindowState = WS
+type WindowInfo = WI
 
 // 便签样式接口
 export interface NoteStyle {
@@ -25,6 +43,7 @@ export interface NoteStyle {
 // 便签数据接口
 export interface Note {
     id: string
+    title?: string  // 可选的标题字段
     content: string
     position: Position
     size: Size
@@ -43,7 +62,7 @@ export interface AppSettings {
     saveInterval: number
 }
 
-// ==================== Electron 相关类型定义 ====================
+// ==================== 应用配置相关类型定义 ====================
 
 // 窗口配置接口
 export interface WindowConfig {
@@ -76,38 +95,6 @@ export interface WindowConfig {
         sandbox: boolean
         webSecurity: boolean
     }
-}
-
-// 窗口状态接口（扩展）
-export interface WindowState {
-    id?: string
-    noteId?: string
-    position: Position
-    size: Size
-    isAlwaysOnTop: boolean
-    isMinimized: boolean
-    isFocused: boolean
-    isMaximized?: boolean
-    createdAt?: number
-    updatedAt?: number
-}
-
-// 窗口信息接口
-export interface WindowInfo {
-    id: string
-    noteId: string
-    position: Position
-    size: Size
-    isAlwaysOnTop: boolean
-    createdAt: number
-}
-
-// 窗口边界接口
-export interface WindowBounds {
-    x: number
-    y: number
-    width: number
-    height: number
 }
 
 // 屏幕边界接口
@@ -184,57 +171,6 @@ export interface IPCChannels {
     'system:getVersion': () => string
     'system:getVersions': () => NodeJS.ProcessVersions
     'system:getPath': (name: string) => string
-}
-
-// Electron API 接口（扩展）
-export interface ElectronAPI {
-    // 窗口操作
-    window: {
-        close: () => Promise<void>
-        minimize: () => Promise<void>
-        maximize: () => Promise<void>
-        getPosition: () => Promise<{ x: number; y: number }>
-        setPosition: (x: number, y: number) => Promise<void>
-        getSize: () => Promise<{ width: number; height: number }>
-        setSize: (width: number, height: number) => Promise<void>
-        setAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
-        isAlwaysOnTop: () => Promise<boolean>
-        focus: () => Promise<void>
-    }
-
-    // 多窗口管理
-    multiWindow: {
-        create: (options: {
-            windowId?: string
-            noteId?: string
-            position?: Position
-            size?: Size
-            alwaysOnTop?: boolean
-        }) => Promise<string>
-        close: (windowId: string) => Promise<void>
-        focus: (windowId: string) => Promise<void>
-        broadcast: (event: string, data: any) => Promise<void>
-        getAllWindows: () => Promise<WindowInfo[]>
-    }
-
-    // 系统信息
-    system: {
-        platform: string
-        getVersion: () => Promise<string>
-        getVersions: () => Promise<NodeJS.ProcessVersions>
-        getPath: (name: string) => Promise<string>
-    }
-
-    // 事件监听
-    on: (channel: string, callback: (...args: any[]) => void) => void
-    off: (channel: string, callback: (...args: any[]) => void) => void
-}
-
-// 全局 Window 接口扩展
-declare global {
-    interface Window {
-        electronAPI: ElectronAPI
-    }
 }
 
 // ==================== Composable 配置类型 ====================
@@ -360,15 +296,6 @@ export interface MultiWindowConfig {
     defaultPosition: Position
     positionOffset: Position
     minDistance: number
-}
-
-// 窗口创建选项接口
-export interface WindowCreateOptions {
-    windowId?: string
-    noteId?: string
-    position?: Position
-    size?: Size
-    alwaysOnTop?: boolean
 }
 
 // 环境变量类型定义

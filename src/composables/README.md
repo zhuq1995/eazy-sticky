@@ -208,6 +208,211 @@ const info = getWindowInfo('window-id')
 console.log('窗口信息:', info)
 ```
 
+### useTheme
+
+提供主题管理功能，支持主题切换、系统主题跟随和主题配置管理。
+
+**功能：**
+- 获取和设置主题模式（light/dark/system）
+- 监听系统主题变更
+- 主题切换（在 light 和 dark 之间切换）
+- 主题配置管理
+- 自动应用主题到 DOM
+- 响应式主题状态
+
+**示例：**
+```typescript
+import { useTheme } from '@/composables/useTheme'
+
+const {
+  currentTheme,
+  systemTheme,
+  themeConfig,
+  isDark,
+  isLight,
+  isFollowingSystem,
+  setTheme,
+  toggleTheme,
+  refreshTheme,
+  applyTheme
+} = useTheme()
+
+// 设置主题
+await setTheme('dark')
+
+// 切换主题（在 light 和 dark 之间切换）
+await toggleTheme()
+
+// 检查是否为深色模式
+if (isDark.value) {
+  console.log('当前是深色模式')
+}
+
+// 刷新主题状态
+await refreshTheme()
+
+// 手动应用主题到 DOM
+applyTheme('dark')
+```
+
+### useSystemTray
+
+提供系统托盘交互功能，支持通知、菜单更新和状态查询。
+
+**功能：**
+- 显示托盘通知
+- 更新托盘菜单
+- 设置托盘工具提示
+- 查询托盘状态
+
+**示例：**
+```typescript
+import { useSystemTray } from '@/composables/useSystemTray'
+
+const {
+  isCreated,
+  showNotification,
+  updateMenu,
+  setToolTip,
+  checkTrayStatus
+} = useSystemTray()
+
+// 显示通知
+await showNotification({
+  title: '新便签',
+  body: '便签已创建'
+})
+
+// 更新菜单
+await updateMenu([
+  { label: '新建便签', click: () => createNote() },
+  { type: 'separator' },
+  { label: '退出', click: () => quit() }
+])
+
+// 检查托盘状态
+const created = await checkTrayStatus()
+```
+
+### useGlobalShortcut
+
+提供全局快捷键配置管理功能。
+
+**功能：**
+- 获取所有快捷键配置
+- 更新快捷键配置
+- 检查快捷键注册状态
+- 根据动作查询快捷键
+
+**示例：**
+```typescript
+import { useGlobalShortcut } from '@/composables/useGlobalShortcut'
+
+const {
+  shortcuts,
+  getAllConfigs,
+  updateConfig,
+  isRegistered,
+  getConfigByAction,
+  refreshConfigs
+} = useGlobalShortcut()
+
+// 更新快捷键配置
+await updateConfig({
+  key: 'Ctrl+Shift+N',
+  action: 'createNote',
+  enabled: true
+})
+
+// 检查快捷键是否已注册
+const registered = await isRegistered('Ctrl+Shift+N')
+
+// 刷新配置
+await refreshConfigs()
+```
+
+### useDisplay
+
+提供显示器信息查询和位置验证功能。
+
+**功能：**
+- 获取所有显示器信息
+- 获取主显示器信息
+- 查询指定点所在的显示器
+- 验证位置是否在显示器范围内
+- 调整位置到显示器内
+- 多显示器环境检测
+
+**示例：**
+```typescript
+import { useDisplay } from '@/composables/useDisplay'
+
+const {
+  displays,
+  primaryDisplay,
+  currentDisplay,
+  displayCount,
+  isMultiDisplay,
+  getAllDisplays,
+  getPrimaryDisplay,
+  getDisplayNearestPoint,
+  getDisplayForWindow,
+  isPositionInBounds,
+  adjustPositionToBounds,
+  getDisplaySummary,
+  refreshDisplays
+} = useDisplay()
+
+// 检查是否为多显示器环境
+if (isMultiDisplay.value) {
+  console.log('多显示器环境')
+}
+
+// 调整位置到显示器内
+const adjusted = await adjustPositionToBounds({ x: 5000, y: 5000 })
+
+// 刷新显示器信息
+await refreshDisplays()
+```
+
+### useAutoLaunch
+
+提供开机自启动配置管理功能。
+
+**功能：**
+- 启用/禁用开机自启动
+- 查询自启动状态
+- 管理自启动配置
+- 支持隐藏启动选项
+
+**示例：**
+```typescript
+import { useAutoLaunch } from '@/composables/useAutoLaunch'
+
+const {
+  isEnabled,
+  config,
+  enable,
+  disable,
+  checkEnabled,
+  getConfig,
+  updateConfig,
+  refreshStatus
+} = useAutoLaunch()
+
+// 启用开机自启动
+await enable(false) // 不隐藏启动
+
+// 禁用开机自启动
+await disable()
+
+// 检查状态
+console.log('自启动已启用:', isEnabled.value)
+
+// 刷新状态
+await refreshStatus()
+```
+
 ## 命名规范
 
 - 文件名和函数名使用 `use` 前缀

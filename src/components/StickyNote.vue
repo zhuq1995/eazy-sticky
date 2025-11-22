@@ -12,10 +12,10 @@
             <!-- 置顶按钮 -->
             <button v-if="isElectron" class="pin-btn pin-button"
                 :class="{ 'pinned': windowOps.windowState.value.isAlwaysOnTop, 'active': windowOps.windowState.value.isAlwaysOnTop }"
-                @click="handleTogglePin" :aria-label="windowOps.windowState.value.isAlwaysOnTop ? '取消置顶' : '置顶窗口'">
+                @click.stop="handleTogglePin" @mousedown.stop :aria-label="windowOps.windowState.value.isAlwaysOnTop ? '取消置顶' : '置顶窗口'">
                 📌
             </button>
-            <button class="close-btn" @click="handleClose" aria-label="关闭便签">
+            <button class="close-btn" @click.stop="handleClose" @mousedown.stop aria-label="关闭便签">
                 ×
             </button>
         </div>

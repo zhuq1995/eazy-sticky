@@ -46,3 +46,6 @@ coverage/
 
 # 其他
 *.tsbuildinfo
+tests
+test-data
+*/tests/
